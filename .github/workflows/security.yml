@@ -8,6 +8,10 @@ name: security (reusable)
 #   - checkov  : deep IaC policy pass — OPT-IN via run_checkov. Report-only (soft-fail).
 # When called, the jobs check out the CALLER's repo, so .trivyignore is read from the caller (per-repo
 # baseline, per CZID-264: accept inherited, hard-fail on NEW). Pin callers to a tag (e.g. @v1).
+#
+# `prepare`: an optional caller command run before the IaC scans (trivy/tflint/checkov). Repos that need
+# codegen before their config is complete (e.g. lambda packaging that generates variables.tf) pass it here,
+# so the scanners see the full config. Repos with no codegen pass nothing.
 
 on:
   workflow_call:
@@ -16,6 +20,10 @@ on:
         description: "Also run the full Checkov policy pass (full-suite / prod check)"
         type: boolean
         default: false
+      prepare:
+        description: "Optional shell command run before the IaC scans (e.g. codegen)."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -39,6 +47,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Prepare (caller codegen, if any)
+        if: ${{ inputs.prepare != '' }}
+        shell: bash
+        run: ${{ inputs.prepare }}
       - name: Trivy (vuln + misconfig + secret)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -54,6 +66,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Prepare (caller codegen, if any)
+        if: ${{ inputs.prepare != '' }}
+        shell: bash
+        run: ${{ inputs.prepare }}
       - uses: terraform-linters/setup-tflint@v6
         with:
           tflint_version: latest
@@ -64,6 +80,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Prepare (caller codegen, if any)
+        if: ${{ inputs.prepare != '' }}
+        shell: bash
+        run: ${{ inputs.prepare }}
       - uses: bridgecrewio/checkov-action@v12
         with:
           directory: .
