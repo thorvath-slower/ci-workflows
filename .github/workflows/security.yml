@@ -9,9 +9,9 @@ name: security (reusable)
 # When called, the jobs check out the CALLER's repo, so .trivyignore is read from the caller (per-repo
 # baseline, per CZID-264: accept inherited, hard-fail on NEW). Pin callers to a tag (e.g. @v1).
 #
-# `prepare`: an optional caller command run before the IaC scans (trivy/tflint/checkov). Repos that need
-# codegen before their config is complete (e.g. lambda packaging that generates variables.tf) pass it here,
-# so the scanners see the full config. Repos with no codegen pass nothing.
+# `prepare`: an optional caller command run before tflint + checkov (NOT trivy — trivy scans source, and
+# the codegen pulls in build artifacts). Repos whose config is only complete after codegen (e.g. lambda
+# packaging that generates variable declarations) pass it here. Repos with no codegen pass nothing.
 
 on:
   workflow_call:
@@ -47,10 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Prepare (caller codegen, if any)
-        if: ${{ inputs.prepare != '' }}
-        shell: bash
-        run: ${{ inputs.prepare }}
+      # NO prepare here on purpose: trivy scans SOURCE. Running the caller's codegen would pull build
+      # artifacts (node_modules, lambda zips) into the scan and flag their deps. tflint/checkov get prepare.
       - name: Trivy (vuln + misconfig + secret)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
