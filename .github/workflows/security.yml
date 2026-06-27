@@ -46,8 +46,20 @@ jobs:
 
   trivy:
     runs-on: ubuntu-latest
+    timeout-minutes: 12 # fail fast instead of hanging on a slow/rate-limited DB pull
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v6
+      - name: Log in to ghcr.io
+        # Authenticated pulls of trivy's vuln-DB + policy bundles avoid the anonymous ghcr.io rate
+        # limit, which otherwise stalls the DB download and hangs the job (seen on cypherid-web-infra).
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       # NO prepare here on purpose: trivy scans SOURCE. Running the caller's codegen would pull build
       # artifacts (node_modules, lambda zips) into the scan and flag their deps. tflint/checkov get prepare.
       # scanners = vuln,misconfig only — NOT secret. The gitleaks job owns secret scanning (history-aware,
