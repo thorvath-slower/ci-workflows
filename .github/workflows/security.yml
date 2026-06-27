@@ -25,6 +25,13 @@ on:
         description: "Optional shell command run before the IaC scans (e.g. codegen)."
         type: string
         default: ""
+      trivy_scanners:
+        description: >
+          Which trivy scanners to run (default: vuln,misconfig). Set to 'vuln' for repos whose
+          full-tree terraform misconfig resolution is pathologically slow (large multi-env module
+          graphs) — IaC misconfig is still covered by tflint and checkov.
+        type: string
+        default: "vuln,misconfig"
 
 permissions:
   contents: read
@@ -70,7 +77,7 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          scanners: vuln,misconfig
+          scanners: ${{ inputs.trivy_scanners }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           trivyignores: .trivyignore
