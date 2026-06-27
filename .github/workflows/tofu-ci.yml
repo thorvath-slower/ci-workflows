@@ -59,32 +59,38 @@ jobs:
         run: ${{ inputs.prepare }}
       - name: tofu fmt -check
         run: tofu fmt -check -recursive ${{ inputs.fmt_path }}
-      - name: tofu validate
+      - name: tofu validate (+ optional per-stack lockfile gate, CZID-30)
         shell: bash
         env:
           VALIDATE_COMMAND: ${{ inputs.validate_command }}
           STACKS: ${{ inputs.stacks }}
+          CHECK_LOCKFILE: ${{ inputs.check_lockfile }}
         run: |
           set -euo pipefail
+          # CZID-30: after init, the stack's .terraform.lock.hcl must be committed and unchanged — so provider
+          # versions stay pinned/reproducible and a broken/malicious provider release can't slip in. Checked
+          # per-stack for the `stacks` path, at root for the `validate_command` path.
+          check_lock() {
+            local d="$1" f
+            [ "$d" = "." ] && f=".terraform.lock.hcl" || f="$d/.terraform.lock.hcl"
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is missing — run 'tofu providers lock ...' in '$d' and commit it."; exit 1
+            fi
+            if ! git diff --exit-code -- "$f"; then
+              echo "::error::$f drifted during init — re-run 'tofu providers lock' in '$d' and commit it."; exit 1
+            fi
+          }
           if [ -n "$VALIDATE_COMMAND" ]; then
             bash -c "$VALIDATE_COMMAND"
+            [ "$CHECK_LOCKFILE" = "true" ] && check_lock "."
           elif [ -n "$STACKS" ]; then
             while IFS= read -r stack; do
               [ -z "$stack" ] && continue
               echo "== validate $stack =="
               tofu -chdir="$stack" init -backend=false -input=false
               tofu -chdir="$stack" validate
+              [ "$CHECK_LOCKFILE" = "true" ] && check_lock "$stack"
             done <<< "$STACKS"
           else
             echo "::error::provide either 'stacks' or 'validate_command'"; exit 1
-          fi
-      - name: Verify provider lockfile committed + current (CZID-30)
-        if: ${{ inputs.check_lockfile }}
-        shell: bash
-        run: |
-          if [ ! -f .terraform.lock.hcl ]; then
-            echo "::error::.terraform.lock.hcl is missing — run 'tofu providers lock ...' and commit it."; exit 1
-          fi
-          if ! git diff --exit-code -- .terraform.lock.hcl; then
-            echo "::error::.terraform.lock.hcl drifted during init — re-run 'tofu providers lock' and commit."; exit 1
           fi
