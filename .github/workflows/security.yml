@@ -3,7 +3,8 @@ name: security (reusable)
 # Reusable security-scanning workflow — the SINGLE SOURCE OF TRUTH for IaC/security gating across the
 # platform repos (CZID-310). Callers add a thin wrapper (see README) so every repo scans identically:
 #   - gitleaks : secret scanning over git history (hard-fail on any leak)
-#   - trivy    : vuln + IaC misconfig + secret (hard-fail on HIGH/CRITICAL; per-repo exceptions in .trivyignore)
+#   - trivy    : vuln + IaC misconfig (hard-fail on HIGH/CRITICAL; per-repo exceptions in .trivyignore).
+#                Secret scanning is gitleaks' job, not trivy's (avoids redundancy + a slow secret-scan hang).
 #   - tflint   : OpenTofu/Terraform lint (hard-fail on errors; warnings reported)
 #   - checkov  : deep IaC policy pass — OPT-IN via run_checkov. Report-only (soft-fail).
 # When called, the jobs check out the CALLER's repo, so .trivyignore is read from the caller (per-repo
@@ -49,12 +50,15 @@ jobs:
       - uses: actions/checkout@v6
       # NO prepare here on purpose: trivy scans SOURCE. Running the caller's codegen would pull build
       # artifacts (node_modules, lambda zips) into the scan and flag their deps. tflint/checkov get prepare.
-      - name: Trivy (vuln + misconfig + secret)
+      # scanners = vuln,misconfig only — NOT secret. The gitleaks job owns secret scanning (history-aware,
+      # hard-fail). Trivy's secret scanner is redundant with it and is very slow on string-heavy files
+      # (e.g. embedded CloudWatch-dashboard JSON), which can hang the job.
+      - name: Trivy (vuln + misconfig)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
-          scanners: vuln,misconfig,secret
+          scanners: vuln,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           trivyignores: .trivyignore
