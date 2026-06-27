@@ -53,12 +53,14 @@ jobs:
         with:
           tofu_version_file: ${{ inputs.tofu_version_file }}
           tofu_wrapper: false
+      - name: tofu fmt -check
+        # Runs on committed files BEFORE prepare, so codegen output (variables.tf, chalice.tf.json, …)
+        # is never formatting-gated.
+        run: tofu fmt -check -recursive ${{ inputs.fmt_path }}
       - name: Prepare (codegen / setup, if any)
         if: ${{ inputs.prepare != '' }}
         shell: bash
         run: ${{ inputs.prepare }}
-      - name: tofu fmt -check
-        run: tofu fmt -check -recursive ${{ inputs.fmt_path }}
       - name: tofu validate (+ optional per-stack lockfile gate, CZID-30)
         shell: bash
         env:
