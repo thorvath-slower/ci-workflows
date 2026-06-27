@@ -1,0 +1,90 @@
+name: tofu-ci (reusable)
+
+# Reusable OpenTofu fmt + validate gate — the SSOT for the IaC correctness gate across the platform repos
+# (CZID-310). Callers add a thin wrapper (see README). Pure correctness: validate runs -backend=false, so no
+# cloud creds or remote state are touched — safe on every PR. Pin callers to a tag (e.g. @v1).
+#
+# Inputs let each repo express its shape without forking the gate:
+#   fmt_path          - what to `tofu fmt -check -recursive` (default ".")
+#   stacks            - newline-separated stack dirs; each gets init(-backend=false)+validate (matrix-free)
+#   validate_command  - custom validate, used INSTEAD of `stacks` (e.g. `make validate`, or codegen+root validate)
+#   prepare           - optional shell run before fmt (codegen / env setup)
+#   check_lockfile    - fail if .terraform.lock.hcl drifted during init (provider-pin gate, CZID-30)
+#   tofu_version_file - file pinning the OpenTofu version (default ".opentofu-version")
+
+on:
+  workflow_call:
+    inputs:
+      fmt_path:
+        type: string
+        default: "."
+      stacks:
+        type: string
+        default: ""
+      validate_command:
+        type: string
+        default: ""
+      prepare:
+        type: string
+        default: ""
+      check_lockfile:
+        type: boolean
+        default: false
+      tofu_version_file:
+        type: string
+        default: ".opentofu-version"
+
+permissions:
+  contents: read
+
+jobs:
+  tofu-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Fetch git module sources over HTTPS (public modules; CI has no SSH key)
+        run: |
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version_file: ${{ inputs.tofu_version_file }}
+          tofu_wrapper: false
+      - name: Prepare (codegen / setup, if any)
+        if: ${{ inputs.prepare != '' }}
+        shell: bash
+        run: ${{ inputs.prepare }}
+      - name: tofu fmt -check
+        run: tofu fmt -check -recursive ${{ inputs.fmt_path }}
+      - name: tofu validate
+        shell: bash
+        env:
+          VALIDATE_COMMAND: ${{ inputs.validate_command }}
+          STACKS: ${{ inputs.stacks }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VALIDATE_COMMAND" ]; then
+            bash -c "$VALIDATE_COMMAND"
+          elif [ -n "$STACKS" ]; then
+            while IFS= read -r stack; do
+              [ -z "$stack" ] && continue
+              echo "== validate $stack =="
+              tofu -chdir="$stack" init -backend=false -input=false
+              tofu -chdir="$stack" validate
+            done <<< "$STACKS"
+          else
+            echo "::error::provide either 'stacks' or 'validate_command'"; exit 1
+          fi
+      - name: Verify provider lockfile committed + current (CZID-30)
+        if: ${{ inputs.check_lockfile }}
+        shell: bash
+        run: |
+          if [ ! -f .terraform.lock.hcl ]; then
+            echo "::error::.terraform.lock.hcl is missing — run 'tofu providers lock ...' and commit it."; exit 1
+          fi
+          if ! git diff --exit-code -- .terraform.lock.hcl; then
+            echo "::error::.terraform.lock.hcl drifted during init — re-run 'tofu providers lock' and commit."; exit 1
+          fi
